@@ -1,12 +1,13 @@
+= 1.41 (15 March 2025) =
+* Fixed: Post notification not being sent on publish when using Gutenberg editor #148
+
 = 1.40 (05 February 2025) =
 * Added: Added integration with BuddyBoss with directly push notifications plugin. #132
 * Added: Added a compatibility with Gravity form #140
 * Fixed: Push Notification Disabled Checkbox Not Working on Publish/Save in Gutenberg Editor #136
 * Fixed: Popup show after 'n' seconds option is not working #102
 * Enhancement: woocommerce_order_status_changed | Option to translate status messages #116
-* Added: Segment users by the user role of the account they are logged into. #141
-* Added: Show the subscription pop-up again by clicking a button on the page. #141
-* Added: After logging into the portal, Visibility of subscription pop-up - only one that 1 page.#141
+* Added: Custom development #141
 
 = 1.39 (28 November 2024) =
 * Enhancement: Mention self hosted in marketing #27

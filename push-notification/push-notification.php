@@ -4,7 +4,7 @@ Plugin Name: Push Notifications for WP - Self Hosted Web Push Notifications
 Plugin URI: https://wordpress.org/plugins/push-notification/
 Description: Push Notification allow admin to automatically notify your audience when you have published new content on your site or custom notices
 Author: Magazine3
-Version: 1.40
+Version: 1.41
 Author URI: http://pushnotifications.io/
 Text Domain: push-notification
 Domain Path: /languages
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 define('PUSH_NOTIFICATION_PLUGIN_FILE',  __FILE__ );
 define('PUSH_NOTIFICATION_PLUGIN_DIR', plugin_dir_path( __FILE__ ));
 define('PUSH_NOTIFICATION_PLUGIN_URL', plugin_dir_url( __FILE__ ));
-define('PUSH_NOTIFICATION_PLUGIN_VERSION', '1.40');
+define('PUSH_NOTIFICATION_PLUGIN_VERSION', '1.41');
 define('PUSH_NOTIFICATION_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
@@ -250,10 +250,10 @@ add_action('upgrader_process_complete', 'pn_plugin_upgrade_function', 10, 2);
 
 function pn_plugin_upgrade_function($upgrader_object, $options) {
     // Check if it's a plugin update
-    if ($options['type'] === 'plugin' && isset($options['action']) && $options['action'] === 'update') {
+    if ( $options['type'] === 'plugin' && isset( $options['action'] ) && $options['action'] === 'update' ) {
         // Check if the updated plugin is your plugin
         $plugin_slug = 'push-notification/push-notification.php';
-        if (in_array($plugin_slug, $options['plugins'])) {
+        if ( is_array( $options['plugins'] ) && in_array( $plugin_slug, $options['plugins'] ) ) {
 			push_notification_on_install();
         }
     }
