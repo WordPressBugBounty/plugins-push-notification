@@ -33,6 +33,10 @@ class Push_Notification_Frontend{
 		){
         	return false;
         }
+		// Get banner location setting
+		$settings = push_notification_settings();
+		$banner_location = isset($settings['banner_location']) ? $settings['banner_location'] : 'footer';
+		
 		if( function_exists('pwaforwp_init_plugin') ){
 			$addNotification = false;
 			if( function_exists('pwaforwp_defaultSettings') ) {
@@ -45,12 +49,12 @@ class Push_Notification_Frontend{
 				add_filter( 'pwaforwp_manifest', array($this, 'manifest_add_gcm_id') );
 
 				add_action("wp_enqueue_scripts", array($this, 'pwaforwp_enqueue_pn_scripts'), 34 );
-				add_action("wp_footer", array($this, 'pn_notification_confirm_banner'), 34 );
+				$this->pn_add_banner_hook($banner_location);
 			}
 		}elseif(function_exists('superpwa_addons_status')){
 			add_filter( 'superpwa_manifest', array($this, 'manifest_add_gcm_id') );
 			add_action("wp_enqueue_scripts", array($this, 'superpwa_enqueue_pn_scripts'), 34 );
-			add_action("wp_footer", array($this, 'pn_notification_confirm_banner'), 34 );
+			$this->pn_add_banner_hook($banner_location);
 			add_filter( "superpwa_sw_template", array($this, 'superpwa_add_pn_swcode'),10,1);
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Reasone: Not processing form
 		}elseif(function_exists('amp_is_enabled') && amp_is_enabled() && empty($_GET['noamp'])){			
@@ -60,7 +64,7 @@ class Push_Notification_Frontend{
 		}else{
 			//manifest
 			add_action('wp_head',array($this, 'manifest_add_homescreen'),1);
-			add_action("wp_footer", array($this, 'pn_notification_confirm_banner'), 34 );
+			$this->pn_add_banner_hook($banner_location);
 			//create manifest
 			add_action( 'rest_api_init', array( $this, 'register_manifest_rest_route' ) );
 			//ServiceWorker
@@ -363,31 +367,102 @@ class Push_Notification_Frontend{
 	function pn_enqueue_ajax_pagination_script() {
 		?>
 		<script type="text/javascript">
-			jQuery(document).ready(function($) {
-				$("body").on("click", ".pn_js_custom_pagination", function(e) {
-					e.preventDefault();
-					var page = $(this).attr('page');
-					var atts = $('#pn_campaings_custom_div').attr('attr');
-					var shortcode_attr = JSON.parse(atts);
-					$.ajax({
-						url: pn_setings.ajaxurl,
-						type: "post",
-						dataType: 'html',
-						data: {
-							action: 'pn_get_compaigns_front',
-							page: page,
-							nonce: pn_setings.remote_nonce,
-							attr: shortcode_attr
-						},
-						success: function(response) {
-							$("#pn_campaings_custom_div").html(response);
-						},
-						error: function() {
-							alert("Something went wrong.");
+			(function() {
+				'use strict';
+				
+				// Wait for DOM to be ready
+				if (document.readyState === 'loading') {
+					document.addEventListener('DOMContentLoaded', initPagination);
+				} else {
+					initPagination();
+				}
+				
+				function initPagination() {
+					// Null check for pn_setings
+					if (typeof pn_setings === 'undefined' || !pn_setings) {
+						console.error('pn_setings is not defined');
+						return;
+					}
+					
+					// Null check for required pn_setings properties
+					if (!pn_setings.ajaxurl || !pn_setings.remote_nonce) {
+						console.error('pn_setings.ajaxurl or pn_setings.remote_nonce is missing');
+						return;
+					}
+					
+					// Event delegation on body
+					document.body.addEventListener('click', function(e) {
+						// Check if clicked element or its parent has the pagination class
+						var target = e.target.closest('.pn_js_custom_pagination');
+						if (!target) {
+							return;
 						}
+						
+						e.preventDefault();
+						
+						// Null check for page attribute
+						var page = target.getAttribute('page');
+						if (!page) {
+							console.error('Page attribute is missing');
+							return;
+						}
+						
+						// Null check for campaigns div
+						var campaignsDiv = document.getElementById('pn_campaings_custom_div');
+						if (!campaignsDiv) {
+							console.error('pn_campaings_custom_div element not found');
+							return;
+						}
+						
+						// Null check for attr attribute
+						var atts = campaignsDiv.getAttribute('attr');
+						if (!atts) {
+							console.error('attr attribute is missing');
+							return;
+						}
+						
+						// Parse JSON with error handling
+						var shortcode_attr;
+						try {
+							shortcode_attr = JSON.parse(atts);
+						} catch (error) {
+							console.error('Failed to parse JSON from attr attribute:', error);
+							alert('Invalid data format.');
+							return;
+						}
+						
+						// Prepare form data
+						var formData = new FormData();
+						formData.append('action', 'pn_get_compaigns_front');
+						formData.append('page', page);
+						formData.append('nonce', pn_setings.remote_nonce);
+						formData.append('attr', JSON.stringify(shortcode_attr));
+						
+						// Make AJAX request using fetch API
+						fetch(pn_setings.ajaxurl, {
+							method: 'POST',
+							body: formData
+						})
+						.then(function(response) {
+							if (!response.ok) {
+								throw new Error('Network response was not ok');
+							}
+							return response.text();
+						})
+						.then(function(html) {
+							if (html && campaignsDiv) {
+								campaignsDiv.innerHTML = html;
+							} else {
+								throw new Error('Empty response received');
+							}
+						})
+						.catch(function(error) {
+							console.error('Error fetching campaigns:', error);
+							alert('Something went wrong.');
+						});
 					});
-				});
-			});
+				}
+			})();
 		</script>
 		<?php
 	}
@@ -540,7 +615,11 @@ class Push_Notification_Frontend{
 
 	public function pn_get_layout_files($filePath){
 
-	    $fileContentResponse = @wp_remote_get(esc_url_raw(PUSH_NOTIFICATION_PLUGIN_URL.'assets/'.$filePath));
+		$url = esc_url_raw(PUSH_NOTIFICATION_PLUGIN_URL.'assets/'.$filePath);
+		// Add cache-busting query parameter
+		$url = add_query_arg('v', PUSH_NOTIFICATION_PLUGIN_VERSION, $url);
+    
+	    $fileContentResponse = @wp_remote_get($url);
 
 	    if ( wp_remote_retrieve_response_code( $fileContentResponse ) != 200 ) {
 
@@ -616,10 +695,32 @@ class Push_Notification_Frontend{
 				}
 			}
 		}
+        // Auto-segmentation data
+		$segmentation_type = isset($pn_Settings['segmentation_type']) ? $pn_Settings['segmentation_type'] : 'manual';
+		$auto_segment_enabled = ($segmentation_type == 'auto');
+		$auto_categories = array();
+		$auto_authors = array();
+		
+		
+		if ($auto_segment_enabled && (is_single() || is_page())) {
+			global $post;
+			if ($post) {
+
+				$post_categories = get_the_category($post->ID);
+				if (!empty($post_categories)) {
+					foreach ($post_categories as $category) {
+						$auto_categories[] = $category->slug;
+					}
+				}
+				
+				$auto_authors[] = $post->post_author;
+			}
+		}
+		
         $settings = array(
 					'nonce' =>  wp_create_nonce("pn_notification"),
 					'pn_config'=> $messageConfig,
-					"swsource" => esc_url_raw(trailingslashit($link)."?push_notification_sw=1"),
+					"swsource" => esc_url_raw(trailingslashit($link)."?push_notification_sw=1&v=".PUSH_NOTIFICATION_PLUGIN_VERSION),
 					"scope" => esc_url_raw(trailingslashit($link)),
 					"ajax_url"=> esc_url_raw(admin_url('admin-ajax.php')),
 					"cookie_scope"=>esc_url_raw(apply_filters('push_notification_cookies_scope', "/")),
@@ -628,7 +729,11 @@ class Push_Notification_Frontend{
 					'popup_show_afternpageview'=> $pn_Settings['notification_popup_show_afternpageview'],
 					'pn_token_exists' =>apply_filters('pn_token_exists',$pn_token_exists),
 					'superpwa_apk_only' => $superpwa_apk_only,
-					'pwaforwp_apk_only' => $pwaforwp_apk_only
+					'pwaforwp_apk_only' => $pwaforwp_apk_only,
+					'segmentation_type' => $segmentation_type,
+					'auto_segment_enabled' => $auto_segment_enabled,
+					'auto_categories' => $auto_categories,
+					'auto_authors' => $auto_authors
 					);
         return $settings;
 	}
@@ -636,12 +741,6 @@ class Push_Notification_Frontend{
 
 	public function enqueue_pn_scripts(){
 		wp_enqueue_script('pn-script-app-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/application.min.js', array(), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
-
-		wp_enqueue_script('pn-script-analytics', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/analytics.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
-		$data = "window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());";
-		wp_add_inline_script('pn-script-analytics', $data, 'after');
 
 		wp_enqueue_script('pn-script-messaging-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/messaging.min.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 		$min = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';	
@@ -652,9 +751,6 @@ class Push_Notification_Frontend{
 	public function pwaforwp_enqueue_pn_scripts(){
 		wp_enqueue_script('pn-script-app-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/application.min.js', array(), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 
-		wp_enqueue_script('pn-script-analytics', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/analytics.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
-		$data = "window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date());";
-		wp_add_inline_script('pn-script-analytics', $data, 'after');
 		wp_enqueue_script('pn-script-messaging-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/messaging.min.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 		$settings = $this->json_settings();
 		wp_localize_script('pn-script-app-frontend', 'pnScriptSetting', $settings);
@@ -663,9 +759,6 @@ class Push_Notification_Frontend{
 	
 	public function superpwa_enqueue_pn_scripts(){
 		wp_enqueue_script('pn-script-app-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/application.min.js', array(), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
-		wp_enqueue_script('pn-script-analytics', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/analytics.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
-		$data = "window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date());";
-		wp_add_inline_script('pn-script-analytics', $data, 'after');
 		wp_enqueue_script('pn-script-messaging-frontend', PUSH_NOTIFICATION_PLUGIN_URL.'assets/public/messaging.min.js', array('pn-script-app-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 		$min = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
 		wp_enqueue_script('pn-script-frontend', PUSH_NOTIFICATION_PLUGIN_URL."assets/public/app-pwaforwp{$min}.js", array('pn-script-app-frontend','pn-script-messaging-frontend'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
@@ -928,6 +1021,27 @@ class Push_Notification_Frontend{
 		return $device;
 	}
 
+	/**
+	 * Add banner hook based on selected location with fallback
+	 */
+	function pn_add_banner_hook($location = 'footer'){
+		switch($location){
+			case 'header':
+				// Hook to wp_head
+				add_action('wp_head', array($this, 'pn_notification_confirm_banner'), 999);
+				break;
+			case 'body':
+				// Hook to wp_body_open (WordPress 5.2+)
+				add_action('wp_body_open', array($this, 'pn_notification_confirm_banner'), 1);
+				break;
+			case 'footer':
+			default:
+				// Default: Hook to wp_footer
+				add_action('wp_footer', array($this, 'pn_notification_confirm_banner'), 34);
+				break;
+		}
+	}
+
 	function pn_notification_confirm_banner(){
 		$settings = push_notification_settings();
 		$user_device = $this->pn_detect_user_agent_new();
@@ -1013,15 +1127,47 @@ class Push_Notification_Frontend{
 			$position = $settings['notification_position'];
 		}
 		$css_position_escaped = '';
-		$setting_category = !empty($settings['category'])? $settings['category'] : [];
-		$selected_category =  !is_array($setting_category) ? explode(',',$setting_category) : $setting_category;
-		$catArray = !is_array($selected_category) ? explode(',',$selected_category) : $selected_category;
+		// Check segmentation type and auto-segment settings
+		$segmentation_type = isset($settings['segmentation_type']) ? $settings['segmentation_type'] : 'manual';
+		$auto_segment_enabled = ($segmentation_type == 'auto') || (isset($settings['pn_auto_segment_post_context']) && $settings['pn_auto_segment_post_context']);
+		
+		if ($auto_segment_enabled) {
+			// Auto-determine category and author from current post
+			$current_post_categories = array();
+			$current_post_author = '';
+			
+			if (is_single() || is_page()) {
+				global $post;
+				if ($post) {
+					// Get current post categories
+					$post_categories = get_the_category($post->ID);
+					if (!empty($post_categories)) {
+						foreach ($post_categories as $category) {
+							$current_post_categories[] = $category->slug;
+						}
+					}
+					
+					// Get current post author
+					$current_post_author = $post->post_author;
+				}
+			}
+			
+			// Use current post data for segmentation
+			$catArray = $current_post_categories;
+			$authorArray = $current_post_author ? array($current_post_author) : array();
+			$all_category = 0; // Don't show "All Categories" option
+		} else {
+			// Use existing segmentation logic for manual segmentation
+			$setting_category = !empty($settings['category'])? $settings['category'] : [];
+			$selected_category =  !is_array($setting_category) ? explode(',',$setting_category) : $setting_category;
+			$catArray = !is_array($selected_category) ? explode(',',$selected_category) : $selected_category;
 
-		$setting_author = !empty($settings['author'])? $settings['author'] : [];
-		$selected_author =  !is_array($setting_author) ? explode(',',$setting_author) : $setting_author;
-		$authorArray = !is_array($selected_author) ? explode(',',$selected_author) : $selected_author;
+			$setting_author = !empty($settings['author'])? $settings['author'] : [];
+			$selected_author =  !is_array($setting_author) ? explode(',',$setting_author) : $setting_author;
+			$authorArray = !is_array($selected_author) ? explode(',',$selected_author) : $selected_author;
 
-		$all_category = (isset($settings['segment_on_category'])) ? $settings['segment_on_category'] : 0;
+			$all_category = (isset($settings['segment_on_category'])) ? $settings['segment_on_category'] : 0;
+		}
 		
 		switch ($position) {
 			case 'bottom-left':
@@ -1168,7 +1314,8 @@ class Push_Notification_Frontend{
 				   		</span>';
 				   		}
 			   		echo '</div>';
-						if(!empty($settings['on_category']) && $settings['on_category'] == 1){
+						// Only show segmentation options if manual segmentation is enabled and auto-segment is not enabled
+						if($segmentation_type == 'manual' && !$auto_segment_enabled && !empty($settings['on_category']) && $settings['on_category'] == 1){
 							if($all_category || !empty($catArray)){
 								echo '<div id="pn-activate-permission-categories-text">
 									'.esc_html__('On which category would you like to receive?', 'push-notification').'

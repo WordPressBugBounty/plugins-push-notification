@@ -14,6 +14,10 @@ class Push_Notification_Admin{
 		if (! is_network_admin()) {
 			add_action( 'admin_menu', array( $this, 'add_menu_links') );
 		}
+		if ( is_multisite() ) {
+			add_action('admin_post_save_push_notification_settings', array( $this,'save_push_notification_settings'));
+		}
+		
 		add_action( 'admin_init', array( $this, 'settings_init') );
 		add_action( 'admin_enqueue_scripts', array( $this, 'load_admin_scripts' ) );
 		add_action( 'wp_ajax_pn_verify_user', array( $this, 'pn_verify_user' ) ); 
@@ -44,6 +48,68 @@ class Push_Notification_Admin{
 			}
 		}
 	}
+
+	public function save_push_notification_settings() {
+		if (!is_multisite()) {
+			return;
+		}
+
+		// Validate permissions and nonce
+		if (! current_user_can( 'manage_network_options' ) ) {
+			wp_die( 'Unauthorized request' );
+		}
+
+		$nonce = '';
+		if ( filter_has_var( INPUT_POST, '_wpnonce' ) ) {
+			$nonce = wp_unslash( filter_input( INPUT_POST, '_wpnonce', FILTER_UNSAFE_RAW ) );
+		}
+
+		if ( empty( $nonce ) || ! wp_verify_nonce( $nonce, 'save_push_notification_settings_nonce' ) ) {
+			wp_die( 'Nonce verification failed' );
+		}
+
+		$raw_post = filter_input( INPUT_POST, 'push_notification_settings', FILTER_UNSAFE_RAW, FILTER_REQUIRE_ARRAY );
+		if ( null !== $raw_post ) {
+			$raw_post = wp_unslash( $raw_post );
+			if ( is_array( $raw_post ) ) {
+				$sanitized = array();
+				foreach ( $raw_post as $key => $value ) {
+					// Sanitize arrays like posttypes, include_targeting_type etc.
+					if ( is_array( $value ) ) {
+						$sanitized[ $key ] = array_map( 'sanitize_text_field', $value );
+					} else {
+						$sanitized[ $key ] = sanitize_text_field( $value );
+					}
+				}
+				update_site_option( 'push_notification_settings', $sanitized );
+			}
+		}
+		wp_safe_redirect(network_admin_url('admin.php?page=push-notification-global-setting&updated=true'));
+		exit;
+	}
+
+	/**
+	 * Sanitize push_notification_settings for register_setting (single-site).
+	 * Mirrors the sanitization used in save_push_notification_settings (multisite).
+	 *
+	 * @param array|mixed $value The option value submitted via the form.
+	 * @return array Sanitized settings array.
+	 */
+	public function sanitize_push_notification_settings( $value ) {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+		$sanitized = array();
+		foreach ( $value as $key => $val ) {
+			if ( is_array( $val ) ) {
+				$sanitized[ $key ] = array_map( 'sanitize_text_field', $val );
+			} else {
+				$sanitized[ $key ] = sanitize_text_field( $val );
+			}
+		}
+		return $sanitized;
+	}
+
 	/*
 	* This function will Messaging functions in service worker
 	* 
@@ -92,7 +158,7 @@ class Push_Notification_Admin{
         $settings = array(
 					'nonce' =>  wp_create_nonce("pn_notification"),
 					'pn_config'=> $messageConfig,
-					"swsource" => esc_url_raw(trailingslashit($link)."?push_notification_sw=1"),
+					"swsource" => esc_url_raw(trailingslashit($link)."?push_notification_sw=1&v=".PUSH_NOTIFICATION_PLUGIN_VERSION),
 					"scope" => esc_url_raw(trailingslashit($link)),
 					"ajax_url"=> esc_url_raw(admin_url('admin-ajax.php'))
 					);
@@ -106,11 +172,10 @@ class Push_Notification_Admin{
 
 			wp_enqueue_media();						
 			wp_enqueue_style( 'wp-color-picker' );
-   		 	wp_enqueue_script( 'push_notification_script',  PUSH_NOTIFICATION_PLUGIN_URL."assets/main-admin-script{$min}.js", array( 'wp-color-picker' ), PUSH_NOTIFICATION_PLUGIN_VERSION, true );
-			wp_enqueue_script('push_notification_script', PUSH_NOTIFICATION_PLUGIN_URL."assets/main-admin-script{$min}.js", array('jquery'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
+			wp_enqueue_script('push_notification_script', PUSH_NOTIFICATION_PLUGIN_URL."assets/main-admin-script{$min}.js", array('jquery', 'wp-color-picker'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 			wp_enqueue_style('push-notification-style', PUSH_NOTIFICATION_PLUGIN_URL."assets/main-admin-style{$min}.css", array('dashboard'), PUSH_NOTIFICATION_PLUGIN_VERSION, 'all');
 			wp_enqueue_style('push-notification_select2', PUSH_NOTIFICATION_PLUGIN_URL.'assets/select2.min.css', array('dashboard'), PUSH_NOTIFICATION_PLUGIN_VERSION, 'all' );
-			wp_enqueue_script('push_notification_select2', PUSH_NOTIFICATION_PLUGIN_URL.'assets/select2.min.js', array(),PUSH_NOTIFICATION_PLUGIN_VERSION, true );
+			wp_enqueue_script('push_notification_select2', PUSH_NOTIFICATION_PLUGIN_URL.'assets/select2.min.js', array( 'jquery' ),PUSH_NOTIFICATION_PLUGIN_VERSION, true );
 			wp_enqueue_script('select2-extended-script', PUSH_NOTIFICATION_PLUGIN_URL. 'assets/select2-extended.min.js', array( 'jquery' ), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
 
 			wp_enqueue_script('pn-meteremoji', PUSH_NOTIFICATION_PLUGIN_URL."assets/meterEmoji.min.js", array('jquery'), PUSH_NOTIFICATION_PLUGIN_VERSION, true);
@@ -204,11 +269,20 @@ class Push_Notification_Admin{
 					?>
 				</h2>
 			</div>
+			<?php	$form_action = ( is_multisite() && is_network_admin() )
+					? admin_url('admin-post.php')
+					: admin_url('options.php');
+				?>
 
-				<form action="<?php echo esc_url(admin_url("options.php")); ?>" method="post" enctype="multipart/form-data" class="push_notification-settings-form">		
+				<form action="<?php echo esc_url($form_action); ?>" method="post" enctype="multipart/form-data" class="push_notification-settings-form">
 					<div class="form-wrap">
 						<?php
-						settings_fields( 'push_notification_setting_dashboard_group' );
+						if (is_multisite() && is_network_admin()) {
+							echo '<input type="hidden" name="action" value="save_push_notification_settings">';
+							wp_nonce_field('save_push_notification_settings_nonce');
+						} else {
+							settings_fields('push_notification_setting_dashboard_group');
+						}
 						echo "<div class='push_notification-dashboard'>";
 							// Status
 							echo "<div id='pn_connect' class='pn-tabs'>";
@@ -222,11 +296,17 @@ class Push_Notification_Admin{
 					</div>
 				</form>
 		</div><?php
-	} 
-
+	}
 	public function settings_init(){
-		register_setting( 'push_notification_setting_dashboard_group', 'push_notification_settings' );
-		// register_setting( 'push_notification_setting_dashboard_group', 'push_notification_global_setting' );
+		if (! is_multisite() ) {
+			register_setting(
+				'push_notification_setting_dashboard_group',
+				'push_notification_settings',
+				array(
+					'sanitize_callback' => array( $this, 'sanitize_push_notification_settings' ),
+				)
+			);
+		}
 
 		add_settings_section('push_notification_dashboard_section',
 			' ', 
@@ -264,6 +344,8 @@ class Push_Notification_Admin{
 				}
 			}
 
+			
+
 			add_settings_field(
 				'pn_key_segment_select',								// ID
 				'<label for="pn_push_on_category_checkbox"><b>'.esc_html__('Segmentation', 'push-notification').'</b></label>',// Title
@@ -273,9 +355,17 @@ class Push_Notification_Admin{
 			);
 			$notification = push_notification_settings();
 			$s_display="style='display:none;margin-left:10px;'";
-			if(isset($notification['on_category']) && $notification['on_category']){
+			if(isset($notification['on_category']) && $notification['on_category'] && isset($notification['segmentation_type']) && $notification['segmentation_type'] == 'manual'){
 				$s_display="style='display:block;margin-left:10px;'";
 			}
+
+			add_settings_field(
+				'pn_segmentation_type',								// ID
+				'<label for="pn_segmentation_type" '.$s_display.'><b>'.esc_html__('Segmentation Type', 'push-notification').'</b></label>',// Title
+				array( $this, 'pn_segmentation_type_callback'),// Callback
+				'push_notification_segment_settings_section',	// Page slug
+				'push_notification_segment_settings_section'	// Settings Section ID
+			);
 			add_settings_field(
 				'pn_key_segment_on_categories',								// ID
 				'<label class="js_category_selector_wrapper" for="pn_push_segment_on_category_checkbox" '.$s_display.'><b>'.esc_html__('On All Categories', 'push-notification').'</b></label>',// Title
@@ -285,7 +375,7 @@ class Push_Notification_Admin{
 			);
 
 			$soc_display="style='display:none;margin-left:10px;'";
-			if(isset($notification['on_category']) && $notification['on_category']){
+			if(isset($notification['on_category']) && $notification['on_category'] && isset($notification['segmentation_type']) && $notification['segmentation_type'] == 'manual'){
 				$soc_display="style='display:block;margin-left:10px;'";
 			}
 			add_settings_field(
@@ -297,7 +387,7 @@ class Push_Notification_Admin{
 			);
 
 			$soc_display="style='display:none;margin-left:10px;'";
-			if(isset($notification['on_category']) && $notification['on_category']){
+			if(isset($notification['on_category']) && $notification['on_category'] && isset($notification['segmentation_type']) && $notification['segmentation_type'] == 'manual'){
 				$soc_display="style='display:block;margin-left:10px;'";
 			}
 			add_settings_field(
@@ -307,6 +397,7 @@ class Push_Notification_Admin{
 				'push_notification_segment_settings_section',	// Page slug
 				'push_notification_segment_settings_section'	// Settings Section ID
 			);
+
 
 			add_settings_field(
 				'pn_display_popup_after_login',								// ID
@@ -528,6 +619,13 @@ class Push_Notification_Admin{
 				'pn_key_prompt_after_npageview',								// ID
 				esc_html__('Popup show after n pages view', 'push-notification'),// Title
 				array( $this, 'pn_key_popupshowafternpageview_callback'),// Callback
+				'push_notification_user_settings_section',	// Page slug
+				'push_notification_notification_settings_section'	// Settings Section ID
+			);
+			add_settings_field(
+				'pn_key_banner_location_select',								// ID
+				esc_html__('Popup Banner Load Location', 'push-notification'),// Title
+				array( $this, 'pn_key_banner_location_callback'),// Callback
 				'push_notification_user_settings_section',	// Page slug
 				'push_notification_notification_settings_section'	// Settings Section ID
 			);
@@ -1223,6 +1321,20 @@ Keep empty or 0 to disable the limit',"push-notification")."</p>";
 		}
 		PN_Field_Generator::get_input_multi_select('posttypes', array('post'), $data, 'pn_push_on_publish_select', '');
 	}
+	public function pn_segmentation_type_callback(){		
+		$notification = push_notification_settings();
+		$segmentation_type = isset($notification['segmentation_type']) ? $notification['segmentation_type'] : 'manual';
+		
+		echo '<div class="pn-field">';
+		echo '<select id="pn_segmentation_type" name="push_notification_settings[segmentation_type]" class="regular-text">';
+		echo '<option value="manual" '.selected($segmentation_type, 'manual', false).'>'.esc_html__('Manual Segmentation', 'push-notification').'</option>';
+		echo '<option value="auto" '.selected($segmentation_type, 'auto', false).'>'.esc_html__('Auto Segmentation', 'push-notification').'</option>';
+		echo '</select>';
+		echo '<br><p class="help">'.esc_html__('Auto Segmentation will automatically segment users based on the post categories and authors.', 'push-notification').'</p>';
+		echo '<p class="help">'.esc_html__('Manual Segmentation will allow you to manually segment users based on the post categories and authors.', 'push-notification').'</p>';
+		echo '</div>';
+	}
+
 	public function pn_key_segment_select_callback(){		
 		$notification = push_notification_settings();
 		$on_category_checked = "";
@@ -1331,7 +1443,7 @@ Keep empty or 0 to disable the limit',"push-notification")."</p>";
 
 			$notification = push_notification_settings();		
 
-			if ( isset( $notification['on_category'] ) && $notification['on_category'] ) {
+			if ( isset( $notification['on_category'] ) && $notification['on_category'] && isset($notification['segmentation_type']) && $notification['segmentation_type'] == 'manual' ) {
 				echo '<div id="category_selector_wrapper" class="js_custom_category_selector_wrapper" style="display:block;">';
 			}else{
 				echo '<div id="category_selector_wrapper" class="js_custom_category_selector_wrapper" style="display:none;">';
@@ -1361,7 +1473,7 @@ Keep empty or 0 to disable the limit',"push-notification")."</p>";
 
 			$notification = push_notification_settings();		
 
-			if ( isset( $notification['on_category'] ) && $notification['on_category'] ) {
+			if ( isset( $notification['on_category'] ) && $notification['on_category'] && isset($notification['segmentation_type']) && $notification['segmentation_type'] == 'manual' ) {
 				echo '<div id="category_selector_wrapper" class="js_custom_category_selector_wrapper" style="display:block;">';
 			}else{
 				echo '<div id="category_selector_wrapper" class="js_custom_category_selector_wrapper" style="display:none;">';
@@ -1458,6 +1570,16 @@ Keep empty or 0 to disable the limit',"push-notification")."</p>";
 		);
 		PN_Field_Generator::get_input_select('notification_position', 'bottom-left', $data, 'pn_push_on_publish', '');
 	}
+
+	public function pn_key_banner_location_callback(){		
+		$data = array(
+			'footer'=> esc_html__('Footer (Recommended)', 'push-notification'),
+			'body'=> esc_html__('Body', 'push-notification'),
+			'header'=> esc_html__('Header', 'push-notification'),
+		);
+		PN_Field_Generator::get_input_select('banner_location', 'footer', $data, 'pn_push_on_publish', '');
+	}
+
 	public function pn_display_popup_after_login_callback(){		
 		$notification = push_notification_settings();
 		$name = 'pn_display_popup_after_login';
@@ -1467,16 +1589,16 @@ Keep empty or 0 to disable the limit',"push-notification")."</p>";
 	}
 	public function pn_device_target_callback(){
 		$name = 'pn_device_target';
-		$desktop_value = 0;
-		$mobile_value = 0;
+		$desktop_value = 1;
+		$mobile_value = 1;
 		$class = $id = 'pn_device_target';
 
 		$settings = push_notification_settings();
-		if(isset($settings[$name]['desktop']) && $settings[$name]['desktop'] == 1){
-			$desktop_value = 1;
+		if(isset($settings[$name]['desktop']) && $settings[$name]['desktop'] == 0){
+			$desktop_value = 0;
 		}
-		if(isset($settings[$name]['mobile']) && $settings[$name]['mobile'] == 1){
-			$mobile_value = 1;
+		if(isset($settings[$name]['mobile']) && $settings[$name]['mobile'] == 0){
+			$mobile_value = 0;
 		}
 		?>
 		<div class="checkbox_wrapper">
@@ -2434,6 +2556,7 @@ function push_notification_settings(){
 		'on_publish'=> 1,
 		'posttypes'=> array("post","page"),		
 		'notification_position'=> 'bottom-left',
+		'banner_location'=> 'footer',
 		'popup_banner_message'=> esc_html__('Enable Notifications', 'push-notification'),
 		'popup_banner_accept_btn'=> esc_html__('OK', 'push-notification'),
 		'popup_banner_decline_btn'=> esc_html__('No thanks', 'push-notification'),
@@ -2453,7 +2576,9 @@ function push_notification_settings(){
 		'popup_display_setings_bg_color'=>'#222',
 		'popup_display_setings_border_radius'=>'4',
 		'notification_botton_position'=>'top',
-		'pn_key_notification_limit_number'=>0
+		'pn_key_notification_limit_number'=>0,
+		'pn_device_target' => array('desktop'=> 1 ,'mobile' =>1 ),
+		'segmentation_type' => 'manual'
 	);
 	$push_notification_settings = wp_parse_args($push_notification_settings, $default);
 	$push_notification_settings = apply_filters("pn_settings_options_array", $push_notification_settings);
@@ -2879,7 +3004,7 @@ function pn_get_all_unique_meta() {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Reason : Custom table
 			$unique_tokens = $wpdb->get_col(
 				$wpdb->prepare(
-					// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared --Reason : %i modifier is not used because of compatibility issue for WP versions
+					// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter --Reason : %i modifier is not used because of compatibility issue for WP versions
 					"SELECT DISTINCT url FROM {$table_name} WHERE status = %s", 
 					'active'
 				)
@@ -3272,3 +3397,5 @@ add_action( 'wp_ajax_update_pn_meta' , 'pn_update_meta_ajax_callback' );
 	}
 }
 add_action( 'admin_enqueue_scripts', 'pn_enqueue_admin_meta_script' );
+
+

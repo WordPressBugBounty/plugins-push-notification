@@ -17,9 +17,14 @@ const messaging = firebase.messaging();
 		}else{
 			console.log('Pushnotification not supported ');
 		}
-	})
-firebase.analytics();	  
+	})  
+// Store service worker registration globally for foreground notifications
+var pnServiceWorkerRegistration = null;
+
 function pushnotification_load_messaging(reg){
+  // Store registration for use in foreground notifications
+  pnServiceWorkerRegistration = reg;
+  
   // [START refresh_token]
   // Callback fired if Instance ID token is updated.
   messaging.onTokenRefresh(() => {
@@ -76,7 +81,7 @@ function pushnotification_load_messaging(reg){
 		}
 		var wrapper = document.getElementsByClassName("pn-wrapper");
 		setTimeout(function() {
-			if(wrapper){ wrapper[0].style.display="flex"; }
+			if(wrapper && wrapper[0]){ wrapper[0].style.display="flex"; }
 	   }, pnScriptSetting.popup_show_afternseconds);
 	}
 	document.getElementById("pn-activate-permission_link_nothanks").addEventListener("click", function(){
@@ -120,22 +125,50 @@ function pushnotification_load_messaging(reg){
 	})
 	
 	messaging.onMessage(function(payload) {
-		console.log('Message received. ', payload);
+		console.log('Message received (foreground). ', payload);
 
 		let notificationTitle = payload.data.title;
 		let notificationOptions = {
-		body: payload.data.body,
-		icon: payload.data.icon,
-		image: payload.data.image,
-		vibrate: [100, 50, 100],
-		data: {
-			dateOfArrival: Date.now(),
-			primarykey: payload.data.currentCampaign,
-			url : payload.data.url
-		  },
+			body: payload.data.body,
+			icon: payload.data.icon,
+			image: payload.data.image,
+			vibrate: [100, 50, 100],
+			tag: 'pn-' + (payload.data.currentCampaign || Date.now()), // CRITICAL: Tag allows proper click tracking
+			data: {
+				dateOfArrival: Date.now(),
+				primarykey: payload.data.currentCampaign,
+				currentCampaign: payload.data.currentCampaign, // Store both for compatibility
+				url: payload.data.url || payload.data.click_url // Handle both url and click_url
+			},
 		}
 
-		reg.showNotification(notificationTitle, notificationOptions);  // show notification in foreground  for pwa
+		// Use service worker's showNotification instead of new Notification()
+		// This works in all contexts (PWA, mobile, desktop) and the service worker's
+		// notificationclick handler will handle clicks automatically
+		if (pnServiceWorkerRegistration) {
+			pnServiceWorkerRegistration.showNotification(notificationTitle, notificationOptions)
+				.then(function() {
+					console.log("PN Success (foreground): Notification shown via service worker");
+				})
+				.catch(function(error) {
+					console.error("PN Error (foreground): Failed to show notification via service worker", error);
+					// Fallback: Try to get registration if not stored
+					navigator.serviceWorker.ready.then(function(reg) {
+						return reg.showNotification(notificationTitle, notificationOptions);
+					}).catch(function(fallbackError) {
+						console.error("PN Error (foreground): Fallback also failed", fallbackError);
+					});
+				});
+		} else {
+			// Fallback: Get registration if not stored
+			navigator.serviceWorker.ready.then(function(reg) {
+				return reg.showNotification(notificationTitle, notificationOptions);
+			}).then(function() {
+				console.log("PN Success (foreground): Notification shown via service worker (fallback)");
+			}).catch(function(error) {
+				console.error("PN Error (foreground): Failed to show notification", error);
+			});
+		}
 	});
 
 	if (navigator.clearAppBadge) {
@@ -202,18 +235,41 @@ function push_notification_saveToken(currentToken){
 		console.log(this.responseText);
 	  }
 	};
-	const optioArr = [];
-	const optElm = document.querySelectorAll("#pn-categories-checkboxes input:checked");
-	  for (var i=0; i <=  optElm.length - 1 ; i++) {
-		  optioArr.push(optElm[i].value);
-	  }
-	const optioArrAuthor = [];
-	const optElmAuthor = document.querySelectorAll("#pn-author-checkboxes input:checked");
-	for (var i=0; i <=  optElmAuthor.length - 1 ; i++) {
-		optioArrAuthor.push(optElmAuthor[i].value);
+	// Check if auto-segmentation is enabled
+	var autoSegmentEnabled = pnScriptSetting.auto_segment_enabled || false;
+	var optioArr = [];
+	var optioArrAuthor = [];
+	
+	// Debug logging
+	console.log('Auto-segment enabled:', autoSegmentEnabled);
+	console.log('Auto categories:', pnScriptSetting.auto_categories);
+	console.log('Auto authors:', pnScriptSetting.auto_authors);
+	
+	if (autoSegmentEnabled) {
+		// Use auto-determined category and author data
+		optioArr = pnScriptSetting.auto_categories || [];
+		optioArrAuthor = pnScriptSetting.auto_authors || [];
+		console.log('Using auto data - categories:', optioArr, 'authors:', optioArrAuthor);
+	} else {
+		// Use user-selected categories and authors
+		const optElm = document.querySelectorAll("#pn-categories-checkboxes input:checked");
+		for (var i=0; i <=  optElm.length - 1 ; i++) {
+			optioArr.push(optElm[i].value);
+		}
+		const optElmAuthor = document.querySelectorAll("#pn-author-checkboxes input:checked");
+		for (var i=0; i <=  optElmAuthor.length - 1 ; i++) {
+			optioArrAuthor.push(optElmAuthor[i].value);
+		}
+		console.log('Using manual selection - categories:', optioArr, 'authors:', optioArrAuthor);
 	}
+	
 	var authorArraystr = [...optioArrAuthor].join(',');
     var catArraystr = [...optioArr].join(',');
+	
+	// Debug the final values being sent
+	console.log('Final category string:', catArraystr);
+	console.log('Final author string:', authorArraystr);
+	
 	var grabOs = pushnotificationFCMGetOS();
 	var browserClient = pushnotificationFCMbrowserclientDetector();
 	var currentUrl = window.location.href;
