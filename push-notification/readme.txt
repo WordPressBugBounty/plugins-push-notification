@@ -1,9 +1,9 @@
 === Push Notifications for WP - Self Hosted Web Push Notifications ===
 Contributors: magazine3  
 Requires at least: 5.0  
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 5.6.20 
-Stable tag: 1.51
+Stable tag: 1.52
 License: GPLv2 or later  
 License URI: http://www.gnu.org/licenses/gpl-2.0.html  
 Tags: Push, Web Push, Push Notification, Mobile Notification, Desktop Notifications  
@@ -97,9 +97,13 @@ We’re actively improving Push Notifications for WP and prioritize user feedbac
 6. Visibility section for controlling where the subscription popup appears.
 
 == Changelog ==
+= 1.52 (03 September 2026) = 
+* Added User need notification when we get someone posts a message on the wise chat page #44
+* Tested: WordPress version upto 7.1
+
 = 1.51 (05 August 2026) = 
 * Added Allow different user role to send notification #194
-* Enhancement : Plugin Check (PCP) code improvements
+* Enhancement : PCP Improvement #195
 
 = 1.50 (22 May 2026) = 
 * Enhancement : Plugin Check (PCP) code improvements
@@ -174,16 +178,6 @@ We’re actively improving Push Notifications for WP and prioritize user feedbac
 
 = 1.38 (17 September 2024) =
 * Enhancement: Minor improvements #129  
-* Added: Feature to resend/reuse campaigns already created #127  
-
-= 1.37 (30 August 2024) =
-* Fixed: No active subscriber found when sending push notification #124  
-
-= 1.36 (24 August 2024) =
-* Fixed: Conflict with SuperPWA #121  
-* Fixed: CSV file not working properly #114  
-* Added: Feature to clean logs in the Campaign tab in dashboard #117  
-* Enhancement: General improvements #122  
-* Enhancement: Tested with WordPress 6.6 
+* Added: Feature to resend/reuse campaigns already created #127
 
 Full changelog available at: [changelog.txt](https://plugins.svn.wordpress.org/push-notification/trunk/changelog.txt)
